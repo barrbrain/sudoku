@@ -1,0 +1,19 @@
+[package]
+name = "sudoku"
+version = "0.1.0"
+authors = ["David Michael Barr <b@rr-dav.id.au>"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/barrbrain/sudoku"
+homepage = "https://ba.rr-dav.id.au/sudoku/"
+description = """
+Sudoku solver in Rust, with web UI.
+"""
+edition = "2018"
+rust-version = "1.56"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = { version = "=0.2.37", default-features = false }
