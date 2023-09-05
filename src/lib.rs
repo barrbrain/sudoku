@@ -7,8 +7,10 @@ const N: usize = SQRT_N * SQRT_N;
 const VARS: usize = N * N * N;
 const CRUMBS: usize = 32 / 2;
 const UNITS: usize = VARS / CRUMBS + 1;
-const LITERALS: usize = u16::MAX as usize;
-const CLAUSES: usize = LITERALS;
+
+// Extended CNF encoding (9x9)
+const LITERALS: usize = 26_973;
+const CLAUSES: usize = 12_717;
 
 const fn assert(condition: bool) -> Result<(), ()> {
     if condition {
@@ -29,6 +31,12 @@ const fn index(row: usize, column: usize, value: usize) -> usize {
         .wrapping_add(column)
         .wrapping_mul(N)
         .wrapping_add(value)
+}
+const fn is(index: usize) -> u16 {
+    ((index << 1) | 1) as u16
+}
+const fn not(index: usize) -> u16 {
+    (index << 1) as u16
 }
 
 impl Sudoku {
@@ -84,6 +92,116 @@ impl Sudoku {
         self.next_clause = next_clause + 1;
         Ok(())
     }
+    fn cell_clauses(&mut self, row: usize, column: usize) -> Result<(), ()> {
+        // Uniqueness
+        for high_value in 1..N {
+            for low_value in 0..high_value {
+                self.try_insert(&[
+                    not(index(row, column, low_value)),
+                    not(index(row, column, high_value)),
+                ])?;
+            }
+        }
+        // Definedness
+        let mut clause = [0; N];
+        for (value, literal) in clause.iter_mut().enumerate() {
+            *literal = is(index(row, column, value));
+        }
+        self.try_insert(&clause)
+    }
+    fn row_clauses(&mut self, row: usize, value: usize) -> Result<(), ()> {
+        // Uniqueness
+        for high_column in 1..N {
+            for low_column in 0..high_column {
+                self.try_insert(&[
+                    not(index(row, low_column, value)),
+                    not(index(row, high_column, value)),
+                ])?;
+            }
+        }
+        // Definedness
+        let mut clause = [0; N];
+        for (column, literal) in clause.iter_mut().enumerate() {
+            *literal = is(index(row, column, value));
+        }
+        self.try_insert(&clause)
+    }
+    fn column_clauses(&mut self, column: usize, value: usize) -> Result<(), ()> {
+        // Uniqueness
+        for high_row in 1..N {
+            for low_row in 0..high_row {
+                self.try_insert(&[
+                    not(index(low_row, column, value)),
+                    not(index(high_row, column, value)),
+                ])?;
+            }
+        }
+        // Definedness
+        let mut clause = [0; N];
+        for (row, literal) in clause.iter_mut().enumerate() {
+            *literal = is(index(row, column, value));
+        }
+        self.try_insert(&clause)
+    }
+    fn block_clauses(
+        &mut self,
+        block_row: usize,
+        block_column: usize,
+        value: usize,
+    ) -> Result<(), ()> {
+        // Uniqueness
+        for high_offset in 1..N {
+            let high_row = block_row + high_offset / SQRT_N;
+            let high_column = block_column + high_offset % SQRT_N;
+            for low_offset in 0..high_offset {
+                let low_row = block_row + low_offset / SQRT_N;
+                let low_column = block_column + low_offset % SQRT_N;
+                self.try_insert(&[
+                    not(index(low_row, low_column, value)),
+                    not(index(high_row, high_column, value)),
+                ])?;
+            }
+        }
+        // Definedness
+        let mut clause = [0; N];
+        for (offset, subclause) in clause.chunks_exact_mut(SQRT_N).enumerate() {
+            let row = block_row + offset;
+            for (offset, literal) in subclause.iter_mut().enumerate() {
+                let column = block_column + offset;
+                *literal = is(index(row, column, value));
+            }
+        }
+        self.try_insert(&clause)
+    }
+    fn generate_clauses(&mut self) -> Result<(), ()> {
+        // Cells
+        for row in 0..N {
+            for column in 0..N {
+                self.cell_clauses(row, column)?;
+            }
+        }
+        // Rows
+        for row in 0..N {
+            for value in 0..N {
+                self.row_clauses(row, value)?;
+            }
+        }
+        // Columns
+        for column in 0..N {
+            for value in 0..N {
+                self.column_clauses(column, value)?;
+            }
+        }
+        // Blocks
+        for block_row in (0..N).step_by(SQRT_N) {
+            for block_column in (0..N).step_by(SQRT_N) {
+                for value in 0..N {
+                    self.block_clauses(block_row, block_column, value)?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 static mut SUDOKU: Sudoku = Sudoku {
@@ -134,6 +252,6 @@ pub fn start() {
     // SAFETY: Entrypoint; no concurrent access.
     unsafe {
         SUDOKU.assign(3, 4, 8);
-        let _ = SUDOKU.try_insert(&[1, 2]);
+        let _ = SUDOKU.generate_clauses();
     }
 }
