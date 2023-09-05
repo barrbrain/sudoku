@@ -9,8 +9,8 @@ const CRUMBS: usize = 32 / 2;
 const UNITS: usize = VARS / CRUMBS + 1;
 
 // Extended CNF encoding (9x9)
-const LITERALS: usize = 26_973;
-const CLAUSES: usize = 12_717;
+const LITERALS: usize = 26_244;
+const CLAUSES: usize = 11_988;
 
 const fn assert(condition: bool) -> Result<(), ()> {
     if condition {
@@ -24,6 +24,8 @@ struct Sudoku {
     next_literal: usize,
     next_clause: usize,
     units: [u32; UNITS],
+    clauses: [u16; CLAUSES],
+    literals: [u16; LITERALS],
 }
 
 const fn index(row: usize, column: usize, value: usize) -> usize {
@@ -78,16 +80,43 @@ impl Sudoku {
     }
     fn try_insert(&mut self, clause: &[u16]) -> Result<(), ()> {
         let first_literal = self.next_literal;
-        let next_clause = self.next_clause;
         let mut next_literal = first_literal;
         for &literal in clause {
             let value = self.get((literal >> 1) as usize);
             if value == 0 {
+                // Literal is indeterminate.
                 assert(next_literal < LITERALS)?;
+                self.literals[next_literal] = literal;
+                next_literal += 1;
+            } else if value == (1 << (literal & 1)) {
+                // Literal is true, skip clause.
+                return Ok(());
             }
-            next_literal += 1;
+            // Literal is false, skip literal.
         }
+        // Empty clause.
+        if first_literal == next_literal {
+            return Ok(());
+        }
+        // Unit clause.
+        if next_literal.wrapping_sub(first_literal) == 1 {
+            assert(first_literal < LITERALS)?;
+            let literal = self.literals[first_literal];
+            let index = (literal >> 1) as usize;
+            if (literal & 1) == 0 {
+                self.set(index, false);
+            } else {
+                // Effectively assignment, apply the rules.
+                let row = index / (N * N);
+                let column = index / N % N;
+                let value = index % N;
+                self.assign(row, column, value);
+            }
+            return Ok(());
+        }
+        let next_clause = self.next_clause;
         assert(next_clause < CLAUSES)?;
+        self.clauses[next_clause] = first_literal as u16;
         self.next_literal = next_literal;
         self.next_clause = next_clause + 1;
         Ok(())
@@ -208,6 +237,8 @@ static mut SUDOKU: Sudoku = Sudoku {
     next_literal: 0,
     next_clause: 0,
     units: [0; UNITS],
+    clauses: [0; CLAUSES],
+    literals: [0; LITERALS],
 };
 
 #[wasm_bindgen]
