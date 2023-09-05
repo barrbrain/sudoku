@@ -7,8 +7,20 @@ const N: usize = SQRT_N * SQRT_N;
 const VARS: usize = N * N * N;
 const CRUMBS: usize = 32 / 2;
 const UNITS: usize = VARS / CRUMBS + 1;
+const LITERALS: usize = u16::MAX as usize;
+const CLAUSES: usize = LITERALS;
+
+const fn assert(condition: bool) -> Result<(), ()> {
+    if condition {
+        Ok(())
+    } else {
+        Err(())
+    }
+}
 
 struct Sudoku {
+    next_literal: usize,
+    next_clause: usize,
     units: [u32; UNITS],
 }
 
@@ -56,9 +68,29 @@ impl Sudoku {
             }
         }
     }
+    fn try_insert(&mut self, clause: &[u16]) -> Result<(), ()> {
+        let first_literal = self.next_literal;
+        let next_clause = self.next_clause;
+        let mut next_literal = first_literal;
+        for &literal in clause {
+            let value = self.get((literal >> 1) as usize);
+            if value == 0 {
+                assert(next_literal < LITERALS)?;
+            }
+            next_literal += 1;
+        }
+        assert(next_clause < CLAUSES)?;
+        self.next_literal = next_literal;
+        self.next_clause = next_clause + 1;
+        Ok(())
+    }
 }
 
-static mut SUDOKU: Sudoku = Sudoku { units: [0; UNITS] };
+static mut SUDOKU: Sudoku = Sudoku {
+    next_literal: 0,
+    next_clause: 0,
+    units: [0; UNITS],
+};
 
 #[wasm_bindgen]
 pub fn assign(index: usize) {
@@ -85,10 +117,23 @@ pub fn units_len() -> usize {
     UNITS
 }
 
+#[wasm_bindgen]
+pub fn literals() -> usize {
+    //SAFETY: Primitive value.
+    unsafe { SUDOKU.next_literal }
+}
+
+#[wasm_bindgen]
+pub fn clauses() -> usize {
+    //SAFETY: Primitive value.
+    unsafe { SUDOKU.next_clause }
+}
+
 #[wasm_bindgen(start)]
 pub fn start() {
     // SAFETY: Entrypoint; no concurrent access.
     unsafe {
         SUDOKU.assign(3, 4, 8);
+        let _ = SUDOKU.try_insert(&[1, 2]);
     }
 }
