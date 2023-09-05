@@ -278,11 +278,18 @@ pub fn clauses() -> usize {
     unsafe { SUDOKU.next_clause }
 }
 
+#[wasm_bindgen]
+pub fn generate_clauses() {
+    //SAFETY: If single-threaded.
+    unsafe {
+        let _ = SUDOKU.generate_clauses();
+    }
+}
+
 #[wasm_bindgen(start)]
 pub fn start() {
     // SAFETY: Entrypoint; no concurrent access.
     unsafe {
         SUDOKU.assign(3, 4, 8);
-        let _ = SUDOKU.generate_clauses();
     }
 }

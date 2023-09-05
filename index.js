@@ -1,5 +1,5 @@
 import { memory } from './pkg/index_bg.wasm';
-import { assign, clauses, literals, units_ptr, units_len } from './pkg/index.js';
+import { assign, clauses, generate_clauses, literals, units_ptr, units_len } from './pkg/index.js';
 const UNITS = units_len();
 const units = () => new Uint32Array(memory.buffer, units_ptr(), UNITS);
 
@@ -102,6 +102,11 @@ canvas.addEventListener("click", event => {
   assign(getIndex(row, col));
 });
 
-console.log({ literals: literals(), clauses: clauses() });
+const solveButton = document.getElementById("solve");
+solveButton.addEventListener("click", event => {
+  generate_clauses();
+  console.log({ literals: literals(), clauses: clauses() });
+});
+
 
 requestAnimationFrame(renderLoop);
