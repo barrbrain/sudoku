@@ -1,5 +1,6 @@
 #![no_std]
 extern crate std as _no_std;
+use core::mem::MaybeUninit;
 use wasm_bindgen::prelude::*;
 
 const SQRT_N: usize = 3;
@@ -19,10 +20,25 @@ const fn assert(condition: bool) -> Result<(), ()> {
         Err(())
     }
 }
+fn try_write_slice<'a, const LEN: usize>(
+    dst: &'a mut [MaybeUninit<u16>; LEN],
+    src: &[u16; LEN],
+    len: usize,
+) -> Result<&'a mut [u16], ()> {
+    //SAFETY: This is the canonical way to fill an uninit slice.
+    unsafe {
+        assert(len <= LEN)?;
+        let src: &[MaybeUninit<u16>] = core::mem::transmute(&src[..len]);
+        let dst = &mut dst[..len];
+        dst.copy_from_slice(src);
+        Ok(&mut *(dst as *mut [MaybeUninit<u16>] as *mut [u16]))
+    }
+}
 
 struct Sudoku {
     next_literal: usize,
     next_clause: usize,
+    new_units: bool,
     units: [u32; UNITS],
     clauses: [u16; CLAUSES],
     literals: [u16; LITERALS],
@@ -103,6 +119,9 @@ impl Sudoku {
             assert(first_literal < LITERALS)?;
             let literal = self.literals[first_literal];
             let index = (literal >> 1) as usize;
+            if self.get(index) == 0 {
+                self.new_units = true;
+            }
             if (literal & 1) == 0 {
                 self.set(index, false);
             } else {
@@ -203,6 +222,9 @@ impl Sudoku {
         self.try_insert(&clause)
     }
     fn generate_clauses(&mut self) -> Result<(), ()> {
+        self.next_clause = 0;
+        self.next_literal = 0;
+        self.new_units = false;
         // Cells
         for row in 0..N {
             for column in 0..N {
@@ -231,11 +253,43 @@ impl Sudoku {
         }
         Ok(())
     }
+    fn reduce_clauses(&mut self) -> Result<(), ()> {
+        use core::iter::once;
+        self.new_units = false;
+        let len = self.next_clause;
+        if len == 0 {
+            return Ok(());
+        }
+        let mut clauses = unsafe { MaybeUninit::uninit().assume_init() };
+        let clauses = try_write_slice(&mut clauses, &self.clauses, len)?;
+        let tail = {
+            let [.., last] = clauses else {Err(())?};
+            [*last, self.next_literal as u16]
+        };
+        self.next_clause = 0;
+        self.next_literal = 0;
+        for bounds in clauses.windows(2).chain(once(&tail[..])) {
+            let &[first_literal, next_literal] = bounds else {Err(())?};
+            let first_literal = first_literal as usize;
+            let next_literal = next_literal as usize;
+            assert(first_literal <= next_literal)?;
+            assert(next_literal <= LITERALS)?;
+            let src = &self.literals[first_literal..next_literal];
+            let len = src.len();
+            assert(len <= N)?;
+            let mut clause = [0; N];
+            let clause = &mut clause[..len];
+            clause.copy_from_slice(src);
+            self.try_insert(clause)?;
+        }
+        Ok(())
+    }
 }
 
 static mut SUDOKU: Sudoku = Sudoku {
     next_literal: 0,
     next_clause: 0,
+    new_units: false,
     units: [0; UNITS],
     clauses: [0; CLAUSES],
     literals: [0; LITERALS],
@@ -279,6 +333,12 @@ pub fn clauses() -> usize {
 }
 
 #[wasm_bindgen]
+pub fn new_units() -> bool {
+    //SAFETY: Primitive value.
+    unsafe { SUDOKU.new_units }
+}
+
+#[wasm_bindgen]
 pub fn generate_clauses() {
     //SAFETY: If single-threaded.
     unsafe {
@@ -286,10 +346,10 @@ pub fn generate_clauses() {
     }
 }
 
-#[wasm_bindgen(start)]
-pub fn start() {
-    // SAFETY: Entrypoint; no concurrent access.
+#[wasm_bindgen]
+pub fn reduce_clauses() {
+    //SAFETY: If single-threaded.
     unsafe {
-        SUDOKU.assign(3, 4, 8);
+        let _ = SUDOKU.reduce_clauses();
     }
 }
