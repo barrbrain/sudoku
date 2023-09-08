@@ -140,65 +140,64 @@ impl Sudoku {
         self.next_clause = next_clause + 1;
         Ok(())
     }
-    fn cell_clauses(&mut self, row: usize, column: usize) -> Result<(), ()> {
-        // Uniqueness
-        for high_value in 1..N {
+    fn cell_uniqueness(&mut self, row: usize, column: usize) -> Result<(), ()> {
+        Ok(for high_value in 1..N {
             for low_value in 0..high_value {
                 self.try_insert(&[
                     not(index(row, column, low_value)),
                     not(index(row, column, high_value)),
                 ])?;
             }
-        }
-        // Definedness
+        })
+    }
+    fn cell_definedness(&mut self, row: usize, column: usize) -> Result<(), ()> {
         let mut clause = [0; N];
         for (value, literal) in clause.iter_mut().enumerate() {
             *literal = is(index(row, column, value));
         }
         self.try_insert(&clause)
     }
-    fn row_clauses(&mut self, row: usize, value: usize) -> Result<(), ()> {
-        // Uniqueness
-        for high_column in 1..N {
+    fn row_uniqueness(&mut self, row: usize, value: usize) -> Result<(), ()> {
+        Ok(for high_column in 1..N {
             for low_column in 0..high_column {
                 self.try_insert(&[
                     not(index(row, low_column, value)),
                     not(index(row, high_column, value)),
                 ])?;
             }
-        }
-        // Definedness
+        })
+    }
+    fn row_definedness(&mut self, row: usize, value: usize) -> Result<(), ()> {
         let mut clause = [0; N];
         for (column, literal) in clause.iter_mut().enumerate() {
             *literal = is(index(row, column, value));
         }
         self.try_insert(&clause)
     }
-    fn column_clauses(&mut self, column: usize, value: usize) -> Result<(), ()> {
-        // Uniqueness
-        for high_row in 1..N {
+    fn column_uniqueness(&mut self, column: usize, value: usize) -> Result<(), ()> {
+        Ok(for high_row in 1..N {
             for low_row in 0..high_row {
                 self.try_insert(&[
                     not(index(low_row, column, value)),
                     not(index(high_row, column, value)),
                 ])?;
             }
-        }
-        // Definedness
+        })
+    }
+    fn column_definedness(&mut self, column: usize, value: usize) -> Result<(), ()> {
         let mut clause = [0; N];
         for (row, literal) in clause.iter_mut().enumerate() {
             *literal = is(index(row, column, value));
         }
         self.try_insert(&clause)
     }
-    fn block_clauses(
+    fn block_uniqueness(
         &mut self,
         block_row: usize,
         block_column: usize,
         value: usize,
     ) -> Result<(), ()> {
-        // Uniqueness
-        for high_offset in 1..N {
+        Ok(for high_offset in 1..N {
             let high_row = block_row + high_offset / SQRT_N;
             let high_column = block_column + high_offset % SQRT_N;
             for low_offset in 0..high_offset {
@@ -209,8 +208,14 @@ impl Sudoku {
                     not(index(high_row, high_column, value)),
                 ])?;
             }
-        }
-        // Definedness
+        })
+    }
+    fn block_definedness(
+        &mut self,
+        block_row: usize,
+        block_column: usize,
+        value: usize,
+    ) -> Result<(), ()> {
         let mut clause = [0; N];
         for (offset, subclause) in clause.chunks_exact_mut(SQRT_N).enumerate() {
             let row = block_row + offset;
@@ -225,29 +230,47 @@ impl Sudoku {
         self.next_clause = 0;
         self.next_literal = 0;
         self.new_units = false;
-        // Cells
         for row in 0..N {
             for column in 0..N {
-                self.cell_clauses(row, column)?;
+                self.cell_definedness(row, column)?;
             }
         }
-        // Rows
         for row in 0..N {
             for value in 0..N {
-                self.row_clauses(row, value)?;
+                self.row_definedness(row, value)?;
             }
         }
-        // Columns
         for column in 0..N {
             for value in 0..N {
-                self.column_clauses(column, value)?;
+                self.column_definedness(column, value)?;
             }
         }
-        // Blocks
         for block_row in (0..N).step_by(SQRT_N) {
             for block_column in (0..N).step_by(SQRT_N) {
                 for value in 0..N {
-                    self.block_clauses(block_row, block_column, value)?;
+                    self.block_definedness(block_row, block_column, value)?;
+                }
+            }
+        }
+        for row in 0..N {
+            for column in 0..N {
+                self.cell_uniqueness(row, column)?;
+            }
+        }
+        for row in 0..N {
+            for value in 0..N {
+                self.row_uniqueness(row, value)?;
+            }
+        }
+        for column in 0..N {
+            for value in 0..N {
+                self.column_uniqueness(column, value)?;
+            }
+        }
+        for block_row in (0..N).step_by(SQRT_N) {
+            for block_column in (0..N).step_by(SQRT_N) {
+                for value in 0..N {
+                    self.block_uniqueness(block_row, block_column, value)?;
                 }
             }
         }
