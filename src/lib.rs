@@ -1,5 +1,4 @@
 #![no_std]
-extern crate std as _no_std;
 use core::mem::MaybeUninit;
 use wasm_bindgen::prelude::*;
 
