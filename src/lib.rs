@@ -109,10 +109,8 @@ impl Sudoku {
             }
             // Literal is false, skip literal.
         }
-        // Empty clause.
-        if first_literal == next_literal {
-            return Ok(());
-        }
+        // Empty clause should be unreachable.
+        assert(first_literal < next_literal)?;
         // Unit clause.
         if next_literal.wrapping_sub(first_literal) == 1 {
             assert(first_literal < LITERALS)?;
@@ -306,6 +304,30 @@ impl Sudoku {
         }
         Ok(())
     }
+    fn dpll(&mut self) -> bool {
+        while self.new_units && self.next_clause != 0 {
+            if self.reduce_clauses().is_err() {
+                return false;
+            }
+        }
+        if self.next_clause == 0 {
+            return true;
+        }
+        let units = self.units;
+        let index = (self.literals[0] >> 1) as usize;
+        let value = (self.literals[0] & 1) != 0;
+        self.set(index, value);
+        self.new_units = true;
+        if self.dpll() {
+            return true;
+        }
+        self.units = units;
+        self.set(index, !value);
+        if self.generate_clauses().is_err() {
+            return false;
+        }
+        self.dpll()
+    }
 }
 
 static mut SUDOKU: Sudoku = Sudoku {
@@ -374,4 +396,10 @@ pub fn reduce_clauses() {
     unsafe {
         let _ = SUDOKU.reduce_clauses();
     }
+}
+
+#[wasm_bindgen]
+pub fn dpll() -> bool {
+    //SAFETY: If single-threaded.
+    unsafe { SUDOKU.dpll() }
 }

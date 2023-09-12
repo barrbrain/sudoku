@@ -1,5 +1,5 @@
 import { memory } from './pkg/index_bg.wasm';
-import { assign, clauses, generate_clauses, literals, new_units, reduce_clauses, units_ptr, units_len } from './pkg/index.js';
+import { assign, clauses, dpll, generate_clauses, literals, new_units, reduce_clauses, units_ptr, units_len } from './pkg/index.js';
 const UNITS = units_len();
 const units = () => new Uint32Array(memory.buffer, units_ptr(), UNITS);
 
@@ -110,6 +110,7 @@ solveButton.addEventListener("click", event => {
     reduce_clauses();
     console.log({ literals: literals(), clauses: clauses() });
   }
+  console.log({solved: dpll()})
 });
 
 
