@@ -4,7 +4,8 @@ use wasm_bindgen::prelude::*;
 
 const SQRT_N: usize = 3;
 const N: usize = SQRT_N * SQRT_N;
-const VARS: usize = N * N * N;
+const GRID: usize = N * N;
+const VARS: usize = GRID * N;
 const CRUMBS: usize = 32 / 2;
 const UNITS: usize = VARS / CRUMBS + 1;
 
@@ -37,6 +38,8 @@ fn try_write_slice<'a, const LEN: usize>(
 struct Units {
     raw: [u32; UNITS],
     log: [u16; VARS],
+    cursor: [u16; GRID],
+    next_cursor: usize,
     next_log: usize,
     new_units: bool,
 }
@@ -78,7 +81,25 @@ impl Units {
             *v |= mask;
         }
     }
-    fn rollback(&mut self, snapshot: usize) {
+    fn snapshot(&mut self) {
+        if self.next_cursor >= GRID {
+            return;
+        }
+        self.cursor[self.next_cursor] = self.next_log as u16;
+        self.next_cursor += 1;
+    }
+    fn drop_snapshot(&mut self) {
+        if self.next_cursor == 0 {
+            return;
+        }
+        self.next_cursor -= 1;
+    }
+    fn rollback(&mut self) {
+        if self.next_cursor == 0 || self.next_cursor > GRID {
+            return;
+        }
+        self.next_cursor -= 1;
+        let snapshot = self.cursor[self.next_cursor] as usize;
         while self.next_log > snapshot {
             self.next_log -= 1;
             let literal = self.log[self.next_log] as usize;
@@ -127,6 +148,8 @@ impl Units {
         Self {
             raw: [0; UNITS],
             log: [0; VARS],
+            cursor: [0; GRID],
+            next_cursor: 0,
             next_log: 0,
             new_units: false,
         }
@@ -344,16 +367,17 @@ impl Sudoku {
         if self.next_clause == 0 {
             return true;
         }
-        let snapshot = self.units.next_log;
+        self.units.snapshot();
         let (index, value) = {
             let literal = self.literals[u32::MAX as usize % self.next_literal];
             (literal as usize >> 1, literal & 1 == 0)
         };
         self.units.set(index, value);
         if self.dpll() {
+            self.units.drop_snapshot();
             return true;
         }
-        self.units.rollback(snapshot);
+        self.units.rollback();
         self.units.set(index, !value);
         if self.generate_clauses().is_err() {
             return false;
