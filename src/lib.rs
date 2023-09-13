@@ -314,8 +314,10 @@ impl Sudoku {
             return true;
         }
         let units = self.units;
-        let index = (self.literals[0] >> 1) as usize;
-        let value = (self.literals[0] & 1) != 0;
+        let (index, value) = {
+            let literal = self.literals[u32::MAX as usize % self.next_literal];
+            (literal as usize >> 1, literal & 1 == 0)
+        };
         self.set(index, value);
         self.new_units = true;
         if self.dpll() {
