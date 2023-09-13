@@ -36,6 +36,8 @@ fn try_write_slice<'a, const LEN: usize>(
 
 struct Units {
     raw: [u32; UNITS],
+    log: [u16; VARS],
+    next_log: usize,
     new_units: bool,
 }
 
@@ -66,8 +68,21 @@ impl Units {
         let index = VARS.min(index);
         //SAFETY: `units` is sized so that this is in range.
         unsafe {
-            *self.raw.get_unchecked_mut(index / CRUMBS) |=
-                1u32 << (index % CRUMBS * 2 + value as usize);
+            let v = self.raw.get_unchecked_mut(index / CRUMBS);
+            let mask = 1u32 << (index % CRUMBS * 2 + value as usize);
+            if (*v & mask) == 0 && self.next_log < VARS {
+                self.log[self.next_log] = index as u16 * 2 | value as u16;
+                self.next_log += 1;
+                self.new_units = true;
+            }
+            *v |= mask;
+        }
+    }
+    fn rollback(&mut self, snapshot: usize) {
+        while self.next_log > snapshot {
+            self.next_log -= 1;
+            let literal = self.log[self.next_log] as usize;
+            self.raw[literal / 32] ^= 1 << (literal & 31);
         }
     }
     #[inline]
@@ -98,9 +113,6 @@ impl Units {
         }
     }
     fn set_false_or_assign(&mut self, index: usize, value: bool) {
-        if self.get(index) == 0 {
-            self.new_units = true;
-        }
         if value {
             // Effectively assignment, apply the rules.
             let row = index / (N * N);
@@ -114,6 +126,8 @@ impl Units {
     const fn new() -> Self {
         Self {
             raw: [0; UNITS],
+            log: [0; VARS],
+            next_log: 0,
             new_units: false,
         }
     }
@@ -330,17 +344,16 @@ impl Sudoku {
         if self.next_clause == 0 {
             return true;
         }
-        let units = self.units.raw;
+        let snapshot = self.units.next_log;
         let (index, value) = {
             let literal = self.literals[u32::MAX as usize % self.next_literal];
             (literal as usize >> 1, literal & 1 == 0)
         };
         self.units.set(index, value);
-        self.units.new_units = true;
         if self.dpll() {
             return true;
         }
-        self.units.raw = units;
+        self.units.rollback(snapshot);
         self.units.set(index, !value);
         if self.generate_clauses().is_err() {
             return false;
