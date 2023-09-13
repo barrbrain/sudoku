@@ -34,11 +34,15 @@ fn try_write_slice<'a, const LEN: usize>(
     }
 }
 
+struct Units {
+    raw: [u32; UNITS],
+    new_units: bool,
+}
+
 struct Sudoku {
     next_literal: usize,
     next_clause: usize,
-    new_units: bool,
-    units: [u32; UNITS],
+    units: Units,
     clauses: [u16; CLAUSES],
     literals: [u16; LITERALS],
 }
@@ -56,13 +60,13 @@ const fn not(index: usize) -> u16 {
     (index << 1) as u16
 }
 
-impl Sudoku {
+impl Units {
     #[inline]
     fn set(&mut self, index: usize, value: bool) {
         let index = VARS.min(index);
         //SAFETY: `units` is sized so that this is in range.
         unsafe {
-            *self.units.get_unchecked_mut(index / CRUMBS) |=
+            *self.raw.get_unchecked_mut(index / CRUMBS) |=
                 1u32 << (index % CRUMBS * 2 + value as usize);
         }
     }
@@ -70,7 +74,7 @@ impl Sudoku {
     fn get(&self, index: usize) -> u32 {
         let index = VARS.min(index);
         //SAFETY: `units` is sized so that this is in range.
-        unsafe { (*self.units.get_unchecked(index / CRUMBS) >> (index % CRUMBS * 2)) & 3 }
+        unsafe { (*self.raw.get_unchecked(index / CRUMBS) >> (index % CRUMBS * 2)) & 3 }
     }
     fn assign(&mut self, row: usize, column: usize, value: usize) {
         self.set(index(row, column, value), true);
@@ -93,11 +97,34 @@ impl Sudoku {
             }
         }
     }
+    fn set_false_or_assign(&mut self, index: usize, value: bool) {
+        if self.get(index) == 0 {
+            self.new_units = true;
+        }
+        if value {
+            // Effectively assignment, apply the rules.
+            let row = index / (N * N);
+            let column = index / N % N;
+            let value = index % N;
+            self.assign(row, column, value);
+        } else {
+            self.set(index, false);
+        }
+    }
+    const fn new() -> Self {
+        Self {
+            raw: [0; UNITS],
+            new_units: false,
+        }
+    }
+}
+
+impl Sudoku {
     fn try_insert(&mut self, clause: &[u16]) -> Result<(), ()> {
         let first_literal = self.next_literal;
         let mut next_literal = first_literal;
         for &literal in clause {
-            let value = self.get((literal >> 1) as usize);
+            let value = self.units.get((literal >> 1) as usize);
             if value == 0 {
                 // Literal is indeterminate.
                 assert(next_literal < LITERALS)?;
@@ -116,18 +143,8 @@ impl Sudoku {
             assert(first_literal < LITERALS)?;
             let literal = self.literals[first_literal];
             let index = (literal >> 1) as usize;
-            if self.get(index) == 0 {
-                self.new_units = true;
-            }
-            if (literal & 1) == 0 {
-                self.set(index, false);
-            } else {
-                // Effectively assignment, apply the rules.
-                let row = index / (N * N);
-                let column = index / N % N;
-                let value = index % N;
-                self.assign(row, column, value);
-            }
+            let value = (literal & 1) != 0;
+            self.units.set_false_or_assign(index, value);
             return Ok(());
         }
         let next_clause = self.next_clause;
@@ -226,7 +243,7 @@ impl Sudoku {
     fn generate_clauses(&mut self) -> Result<(), ()> {
         self.next_clause = 0;
         self.next_literal = 0;
-        self.new_units = false;
+        self.units.new_units = false;
         for row in 0..N {
             for column in 0..N {
                 self.cell_definedness(row, column)?;
@@ -275,7 +292,7 @@ impl Sudoku {
     }
     fn reduce_clauses(&mut self) -> Result<(), ()> {
         use core::iter::once;
-        self.new_units = false;
+        self.units.new_units = false;
         let len = self.next_clause;
         if len == 0 {
             return Ok(());
@@ -305,7 +322,7 @@ impl Sudoku {
         Ok(())
     }
     fn dpll(&mut self) -> bool {
-        while self.new_units && self.next_clause != 0 {
+        while self.units.new_units && self.next_clause != 0 {
             if self.reduce_clauses().is_err() {
                 return false;
             }
@@ -313,18 +330,18 @@ impl Sudoku {
         if self.next_clause == 0 {
             return true;
         }
-        let units = self.units;
+        let units = self.units.raw;
         let (index, value) = {
             let literal = self.literals[u32::MAX as usize % self.next_literal];
             (literal as usize >> 1, literal & 1 == 0)
         };
-        self.set(index, value);
-        self.new_units = true;
+        self.units.set(index, value);
+        self.units.new_units = true;
         if self.dpll() {
             return true;
         }
-        self.units = units;
-        self.set(index, !value);
+        self.units.raw = units;
+        self.units.set(index, !value);
         if self.generate_clauses().is_err() {
             return false;
         }
@@ -335,8 +352,7 @@ impl Sudoku {
 static mut SUDOKU: Sudoku = Sudoku {
     next_literal: 0,
     next_clause: 0,
-    new_units: false,
-    units: [0; UNITS],
+    units: Units::new(),
     clauses: [0; CLAUSES],
     literals: [0; LITERALS],
 };
@@ -345,20 +361,20 @@ static mut SUDOKU: Sudoku = Sudoku {
 pub fn assign(index: usize) {
     //SAFETY: Not guaranteed yet.
     unsafe {
-        if SUDOKU.get(index) != 0 {
+        if SUDOKU.units.get(index) != 0 {
             return;
         }
         let row = index / (N * N);
         let column = index / N % N;
         let value = index % N;
-        SUDOKU.assign(row, column, value);
+        SUDOKU.units.assign(row, column, value);
     }
 }
 
 #[wasm_bindgen]
 pub fn units_ptr() -> *const u32 {
     //SAFETY: Short-lived immutable view.
-    unsafe { SUDOKU.units.as_ptr() }
+    unsafe { SUDOKU.units.raw.as_ptr() }
 }
 
 #[wasm_bindgen]
@@ -381,7 +397,7 @@ pub fn clauses() -> usize {
 #[wasm_bindgen]
 pub fn new_units() -> bool {
     //SAFETY: Primitive value.
-    unsafe { SUDOKU.new_units }
+    unsafe { SUDOKU.units.new_units }
 }
 
 #[wasm_bindgen]
