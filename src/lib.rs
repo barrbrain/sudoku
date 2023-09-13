@@ -47,6 +47,7 @@ struct Units {
 struct Sudoku {
     next_literal: usize,
     next_clause: usize,
+    lfsr: u32,
     units: Units,
     clauses: [u16; CLAUSES],
     literals: [u16; LITERALS],
@@ -358,6 +359,14 @@ impl Sudoku {
         }
         Ok(())
     }
+    fn lfsr(&mut self) -> usize {
+        let mut x = self.lfsr;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.lfsr = x;
+        x as usize
+    }
     fn dpll(&mut self) -> bool {
         while self.units.new_units && self.next_clause != 0 {
             if self.reduce_clauses().is_err() {
@@ -369,7 +378,7 @@ impl Sudoku {
         }
         self.units.snapshot();
         let (index, value) = {
-            let literal = self.literals[u32::MAX as usize % self.next_literal];
+            let literal = self.literals[self.lfsr() % self.next_literal];
             (literal as usize >> 1, literal & 1 == 0)
         };
         self.units.set(index, value);
@@ -384,11 +393,25 @@ impl Sudoku {
         }
         self.dpll()
     }
+    fn generate_instance(&mut self) {
+        let cursors = self.units.cursor;
+        let literals = self.units.log;
+        self.next_literal = 0;
+        self.next_clause = 0;
+        self.units = Units::new();
+        for cursor in cursors {
+            let literal = literals[cursor as usize] as usize;
+            if (literal & 1) != 0 {
+                self.units.set_false_or_assign(literal >> 1, true);
+            }
+        }
+    }
 }
 
 static mut SUDOKU: Sudoku = Sudoku {
     next_literal: 0,
     next_clause: 0,
+    lfsr: 0,
     units: Units::new(),
     clauses: [0; CLAUSES],
     literals: [0; LITERALS],
@@ -457,4 +480,17 @@ pub fn reduce_clauses() {
 pub fn dpll() -> bool {
     //SAFETY: If single-threaded.
     unsafe { SUDOKU.dpll() }
+}
+
+#[wasm_bindgen]
+pub fn generate_instance(seed: u32) {
+    //SAFETY: If single-threaded.
+    unsafe {
+        let sudoku = &mut SUDOKU;
+        sudoku.units = Units::new();
+        sudoku.lfsr = seed;
+        let _ = sudoku.generate_clauses();
+        sudoku.dpll();
+        sudoku.generate_instance();
+    }
 }

@@ -1,5 +1,5 @@
 import { memory } from './pkg/index_bg.wasm';
-import { assign, clauses, dpll, generate_clauses, literals, new_units, reduce_clauses, units_ptr, units_len } from './pkg/index.js';
+import { assign, clauses, dpll, generate_clauses, generate_instance, literals, new_units, reduce_clauses, units_ptr, units_len } from './pkg/index.js';
 const UNITS = units_len();
 const units = () => new Uint32Array(memory.buffer, units_ptr(), UNITS);
 
@@ -113,5 +113,11 @@ solveButton.addEventListener("click", event => {
   console.log({solved: dpll()})
 });
 
+const genButton = document.getElementById("generate");
+genButton.addEventListener("click", event => {
+  const seed = Math.random() * 0xffffffff | 0;
+  generate_instance(seed);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+});
 
 requestAnimationFrame(renderLoop);
