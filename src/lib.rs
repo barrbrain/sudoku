@@ -70,12 +70,13 @@ impl Units {
     #[inline]
     fn set(&mut self, index: usize, value: bool) {
         let index = VARS.min(index);
+        let literal = index * 2 | value as usize;
         //SAFETY: `units` is sized so that this is in range.
         unsafe {
-            let v = self.raw.get_unchecked_mut(index / CRUMBS);
-            let mask = 1u32 << (index % CRUMBS * 2 + value as usize);
+            let v = self.raw.get_unchecked_mut(literal >> 5);
+            let mask = 1u32 << (literal & 31);
             if (*v & mask) == 0 && self.next_log < VARS {
-                self.log[self.next_log] = index as u16 * 2 | value as u16;
+                self.log[self.next_log] = literal as u16;
                 self.next_log += 1;
                 self.new_units = true;
             }
