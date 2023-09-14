@@ -71,7 +71,7 @@ impl Units {
     fn set(&mut self, index: usize, value: bool) {
         let index = VARS.min(index);
         let literal = index * 2 | value as usize;
-        //SAFETY: `units` is sized so that this is in range.
+        //SAFETY: `raw` is sized so that this is in range.
         unsafe {
             let v = self.raw.get_unchecked_mut(literal >> 5);
             let mask = 1u32 << (literal & 31);
@@ -104,8 +104,12 @@ impl Units {
         let snapshot = self.cursor[self.next_cursor] as usize;
         while self.next_log > snapshot {
             self.next_log -= 1;
-            let literal = self.log[self.next_log] as usize;
-            self.raw[literal / 32] ^= 1 << (literal & 31);
+            unsafe {
+                //SAFETY: `next_log` is always < VARS here.
+                let literal = *self.log.get_unchecked(self.next_log) as usize;
+                //SAFETY: `raw` is sized so that this is in range.
+                *self.raw.get_unchecked_mut(literal / 32) ^= 1 << (literal & 31);
+            }
         }
     }
     #[inline]
@@ -339,13 +343,15 @@ impl Sudoku {
         let mut clauses = unsafe { MaybeUninit::uninit().assume_init() };
         let clauses = try_write_slice(&mut clauses, &self.clauses, len)?;
         let tail = {
-            let [.., last] = clauses else {Err(())?};
+            let [.., last] = clauses else { Err(())? };
             [*last, self.next_literal as u16]
         };
         self.next_clause = 0;
         self.next_literal = 0;
         for bounds in clauses.windows(2).chain(once(&tail[..])) {
-            let &[first_literal, next_literal] = bounds else {Err(())?};
+            let &[first_literal, next_literal] = bounds else {
+                Err(())?
+            };
             let first_literal = first_literal as usize;
             let next_literal = next_literal as usize;
             assert(first_literal <= next_literal)?;
@@ -379,7 +385,11 @@ impl Sudoku {
         }
         self.units.snapshot();
         let (index, value) = {
-            let literal = self.literals[self.randint(self.next_literal).min(LITERALS)];
+            let literal = unsafe {
+                //SAFETY: `next_literal` is always <= LITERALS.
+                let choice = self.randint(self.next_literal);
+                *self.literals.get_unchecked(choice)
+            };
             (literal as usize >> 1, literal & 1 == 0)
         };
         self.units.set(index, value);
@@ -401,7 +411,10 @@ impl Sudoku {
         self.next_clause = 0;
         self.units = Units::new();
         for cursor in cursors {
-            let literal = literals[cursor as usize] as usize;
+            let literal = unsafe {
+                //SAFETY: `cursor` is always < LITERALS.
+                *literals.get_unchecked(cursor as usize) as usize
+            };
             if (literal & 1) != 0 {
                 self.units.set_false_or_assign(literal >> 1, true);
             }
