@@ -360,13 +360,13 @@ impl Sudoku {
         }
         Ok(())
     }
-    fn lfsr(&mut self) -> usize {
+    fn randint(&mut self, limit: usize) -> usize {
         let mut x = self.lfsr;
         x ^= x << 13;
         x ^= x >> 17;
         x ^= x << 5;
         self.lfsr = x;
-        x as usize
+        ((x as u64 * limit as u64) >> 32) as usize
     }
     fn dpll(&mut self) -> bool {
         while self.units.new_units && self.next_clause != 0 {
@@ -379,7 +379,7 @@ impl Sudoku {
         }
         self.units.snapshot();
         let (index, value) = {
-            let literal = self.literals[self.lfsr() % self.next_literal];
+            let literal = self.literals[self.randint(self.next_literal).min(LITERALS)];
             (literal as usize >> 1, literal & 1 == 0)
         };
         self.units.set(index, value);
