@@ -1,5 +1,5 @@
 import { memory } from './pkg/index_bg.wasm';
-import { assign, clauses, dpll, generate_clauses, generate_instance, literals, new_units, reduce_clauses, units_ptr, units_len } from './pkg/index.js';
+import { assign, generate_instance, solve, units_ptr, units_len } from './pkg/index.js';
 const UNITS = units_len();
 const units = () => new Uint32Array(memory.buffer, units_ptr(), UNITS);
 
@@ -104,13 +104,7 @@ canvas.addEventListener("click", event => {
 
 const solveButton = document.getElementById("solve");
 solveButton.addEventListener("click", event => {
-  generate_clauses();
-  console.log({ literals: literals(), clauses: clauses() });
-  while(new_units() && clauses() !== 0) {
-    reduce_clauses();
-    console.log({ literals: literals(), clauses: clauses() });
-  }
-  console.log({solved: dpll()})
+  console.log({solved: solve()})
 });
 
 const genButton = document.getElementById("generate");

@@ -457,43 +457,9 @@ pub fn units_len() -> usize {
 }
 
 #[wasm_bindgen]
-pub fn literals() -> usize {
-    //SAFETY: Primitive value.
-    unsafe { SUDOKU.next_literal }
-}
-
-#[wasm_bindgen]
-pub fn clauses() -> usize {
-    //SAFETY: Primitive value.
-    unsafe { SUDOKU.next_clause }
-}
-
-#[wasm_bindgen]
-pub fn new_units() -> bool {
-    //SAFETY: Primitive value.
-    unsafe { SUDOKU.units.new_units }
-}
-
-#[wasm_bindgen]
-pub fn generate_clauses() {
+pub fn solve() -> bool {
     //SAFETY: If single-threaded.
-    unsafe {
-        let _ = SUDOKU.generate_clauses();
-    }
-}
-
-#[wasm_bindgen]
-pub fn reduce_clauses() {
-    //SAFETY: If single-threaded.
-    unsafe {
-        let _ = SUDOKU.reduce_clauses();
-    }
-}
-
-#[wasm_bindgen]
-pub fn dpll() -> bool {
-    //SAFETY: If single-threaded.
-    unsafe { SUDOKU.dpll() }
+    unsafe { SUDOKU.generate_clauses().is_ok() && SUDOKU.dpll() }
 }
 
 #[wasm_bindgen]
