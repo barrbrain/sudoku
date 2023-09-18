@@ -12,17 +12,16 @@ const TRUE_COLOR = "#000000";
 const SIDE = 9 * 3;
 
 const canvas = document.getElementById("sudoku");
-canvas.style.height = (CELL_SIZE + 1) * SIDE + 1 + 'px';
-canvas.style.width = (CELL_SIZE + 1) * SIDE + 1 + 'px';
 const boundingRect = canvas.getBoundingClientRect();
 const dpr = window.devicePixelRatio || 1;
 canvas.width = boundingRect.width * dpr;
 canvas.height = boundingRect.height * dpr;
+const scale = canvas.width / ((CELL_SIZE + 1) * SIDE + 1);
 const ctx = canvas.getContext('2d', {
   alpha: false,
   desynchronized: true,
 });
-ctx.scale(dpr, dpr);
+ctx.scale(scale, scale);
 
 let renderLoopRequestID = 0;
 const renderLoop = () => {
@@ -106,8 +105,11 @@ const drawCells = () => {
 };
 
 canvas.addEventListener("click", event => {
-  const canvasLeft = event.clientX - boundingRect.left;
-  const canvasTop = event.clientY - boundingRect.top;
+  const boundingRect = canvas.getBoundingClientRect();
+  const scale = ((CELL_SIZE + 1) * SIDE + 1) / boundingRect.width;
+
+  const canvasLeft = (event.clientX - boundingRect.left) * scale;
+  const canvasTop = (event.clientY - boundingRect.top) * scale;
 
   const row = Math.min(Math.floor(canvasTop / (CELL_SIZE + 1)), SIDE - 1);
   const col = Math.min(Math.floor(canvasLeft / (CELL_SIZE + 1)), SIDE - 1);
