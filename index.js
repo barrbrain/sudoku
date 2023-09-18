@@ -18,8 +18,7 @@ const ctx = canvas.getContext('2d');
 
 let renderLoopRequestID = 0;
 const renderLoop = () => {
-  drawCells();
-  renderLoopRequestID = requestAnimationFrame(renderLoop);
+  renderLoopRequestID = requestAnimationFrame(drawCells);
 };
 
 const drawGrid = () => {
@@ -41,7 +40,7 @@ const drawGrid = () => {
   ctx.stroke();
 
   renderedUnits.fill(0);
-  renderLoop();
+  drawCells();
 };
 
 const getIndex = (row, column) => {
@@ -83,9 +82,6 @@ const trueCellDrawer = cellDrawer(0xAAAAAAAA);
 const falseCellDrawer = cellDrawer(0x55555555);
 const drawCells = () => {
   const cells = units();
-  if (!cells.some((v, i) => v !== renderedUnits[i])) {
-    return;
-  }
 
   ctx.font = CELL_SIZE + "px sans-serif";
   ctx.textAlign = "center";
@@ -112,11 +108,13 @@ canvas.addEventListener("click", event => {
   const col = Math.min(Math.floor(canvasLeft / (CELL_SIZE + 1)), SIDE - 1);
 
   assign(getIndex(row, col));
+  renderLoop();
 });
 
 const solveButton = document.getElementById("solve");
 solveButton.addEventListener("click", event => {
   console.log({solved: solve()})
+  renderLoop();
 });
 
 const genButton = document.getElementById("generate");
