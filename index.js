@@ -113,8 +113,9 @@ canvas.addEventListener("click", event => {
 
 const solveButton = document.getElementById("solve");
 solveButton.addEventListener("click", event => {
-  console.log({solved: solve()})
+  const solved = solve();
   renderLoop();
+  console.log({solved: solved})
 });
 
 const genButton = document.getElementById("generate");
