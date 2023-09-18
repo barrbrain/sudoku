@@ -12,13 +12,17 @@ const TRUE_COLOR = "#000000";
 const SIDE = 9 * 3;
 
 const canvas = document.getElementById("sudoku");
-canvas.height = (CELL_SIZE + 1) * SIDE + 1;
-canvas.width = (CELL_SIZE + 1) * SIDE + 1;
-
+canvas.style.height = (CELL_SIZE + 1) * SIDE + 1 + 'px';
+canvas.style.width = (CELL_SIZE + 1) * SIDE + 1 + 'px';
+const boundingRect = canvas.getBoundingClientRect();
+const dpr = window.devicePixelRatio || 1;
+canvas.width = boundingRect.width * dpr;
+canvas.height = boundingRect.height * dpr;
 const ctx = canvas.getContext('2d', {
   alpha: false,
   desynchronized: true,
 });
+ctx.scale(dpr, dpr);
 
 let renderLoopRequestID = 0;
 const renderLoop = () => {
@@ -76,7 +80,7 @@ const cellDrawer = (mask) => {
       const row = toRow[index];
       const col = toCol[index];
       const text = index % 9 + 1;
-      ctx.strokeText(
+      ctx.fillText(
         text,
         col * (CELL_SIZE + 1) + CELL_SIZE / 2 + 1,
         row * (CELL_SIZE + 1) + CELL_SIZE - 1,
@@ -92,23 +96,18 @@ const drawCells = () => {
   ctx.font = CELL_SIZE + "px sans-serif";
   ctx.textAlign = "center";
 
-  ctx.strokeStyle = TRUE_COLOR;
+  ctx.fillStyle = TRUE_COLOR;
   cells.forEach(trueCellDrawer);
 
-  ctx.strokeStyle = FALSE_COLOR;
+  ctx.fillStyle = FALSE_COLOR;
   cells.forEach(falseCellDrawer);
 
   renderedUnits.set(cells);
 };
 
 canvas.addEventListener("click", event => {
-  const boundingRect = canvas.getBoundingClientRect();
-
-  const scaleX = canvas.width / boundingRect.width;
-  const scaleY = canvas.height / boundingRect.height;
-
-  const canvasLeft = (event.clientX - boundingRect.left) * scaleX;
-  const canvasTop = (event.clientY - boundingRect.top) * scaleY;
+  const canvasLeft = event.clientX - boundingRect.left;
+  const canvasTop = event.clientY - boundingRect.top;
 
   const row = Math.min(Math.floor(canvasTop / (CELL_SIZE + 1)), SIDE - 1);
   const col = Math.min(Math.floor(canvasLeft / (CELL_SIZE + 1)), SIDE - 1);
