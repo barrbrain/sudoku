@@ -5,6 +5,7 @@ const units = () => new Uint32Array(memory.buffer, units_ptr(), UNITS);
 const renderedUnits = new Uint32Array(UNITS);
 
 const CELL_SIZE = 16;
+const CELL_COLOR = "#FFFFFF";
 const GRID_COLOR = "#CCCCCC";
 const FALSE_COLOR = "#FFCCCC";
 const TRUE_COLOR = "#000000";
@@ -14,7 +15,10 @@ const canvas = document.getElementById("sudoku");
 canvas.height = (CELL_SIZE + 1) * SIDE + 1;
 canvas.width = (CELL_SIZE + 1) * SIDE + 1;
 
-const ctx = canvas.getContext('2d');
+const ctx = canvas.getContext('2d', {
+  alpha: false,
+  desynchronized: true,
+});
 
 let renderLoopRequestID = 0;
 const renderLoop = () => {
@@ -22,7 +26,9 @@ const renderLoop = () => {
 };
 
 const drawGrid = () => {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.beginPath();
+  ctx.fillStyle = CELL_COLOR;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   ctx.beginPath();
   ctx.strokeStyle = GRID_COLOR;
