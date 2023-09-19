@@ -6,12 +6,43 @@ const SQRT_N: usize = 3;
 const N: usize = SQRT_N * SQRT_N;
 const GRID: usize = N * N;
 const VARS: usize = GRID * N;
+const VALUES: usize = VARS * 2;
 const CRUMBS: usize = 32 / 2;
 const UNITS: usize = VARS / CRUMBS + 1;
 
 // Extended CNF encoding (9x9)
 const LITERALS: usize = 26_244;
 const CLAUSES: usize = 11_988;
+
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+struct SmallIndex<const MAX: usize>(u16);
+impl<const MAX: usize> SmallIndex<MAX> {
+    fn new(index: u16) -> Self {
+        Self(index.min(MAX as u16 - 1))
+    }
+    fn get<T: Sized + Copy>(self, a: &[T; MAX]) -> T {
+        unsafe { *a.get_unchecked(self.0 as usize) }
+    }
+    fn get_mut<T: Sized>(self, a: &mut [T; MAX]) -> &mut T {
+        unsafe { a.get_unchecked_mut(self.0 as usize) }
+    }
+}
+macro_rules! mkshift {
+    ($name:ident: $max:ident >> $shift:literal => $newmax:ident) => {
+        impl SmallIndex<$max> {
+            fn $name(self) -> (SmallIndex<$newmax>, u16) {
+                const _: [(); ($max >> $shift) + ($max != ($max >> $shift << $shift)) as usize] =
+                    [(); $newmax];
+                let mask = (1u16 << $shift) - 1;
+                (SmallIndex(self.0 >> $shift), self.0 & mask)
+            }
+        }
+    };
+}
+mkshift!(to_var: VALUES >> 1 => VARS);
+mkshift!(raw_bit: VALUES >> 5 => UNITS);
+mkshift!(raw_crumb: VARS >> 4 => UNITS);
 
 const fn assert(condition: bool) -> Result<(), ()> {
     if condition {
@@ -20,25 +51,25 @@ const fn assert(condition: bool) -> Result<(), ()> {
         Err(())
     }
 }
-fn try_write_slice<'a, const LEN: usize>(
-    dst: &'a mut [MaybeUninit<u16>; LEN],
-    src: &[u16; LEN],
+fn try_write_slice<'a, const LEN: usize, T: Sized + Copy>(
+    dst: &'a mut [MaybeUninit<T>; LEN],
+    src: &[T; LEN],
     len: usize,
-) -> Result<&'a mut [u16], ()> {
+) -> Result<&'a mut [T], ()> {
     //SAFETY: This is the canonical way to fill an uninit slice.
     unsafe {
         assert(len <= LEN)?;
-        let src: &[MaybeUninit<u16>] = core::mem::transmute(&src[..len]);
+        let src: &[MaybeUninit<T>] = core::mem::transmute(&src[..len]);
         let dst = &mut dst[..len];
         dst.copy_from_slice(src);
-        Ok(&mut *(dst as *mut [MaybeUninit<u16>] as *mut [u16]))
+        Ok(&mut *(dst as *mut [MaybeUninit<T>] as *mut [T]))
     }
 }
 
 struct Units {
     raw: [u32; UNITS],
-    log: [u16; VARS],
-    cursor: [u16; GRID],
+    log: [SmallIndex<VALUES>; VARS],
+    cursor: [SmallIndex<VARS>; GRID],
     next_cursor: usize,
     next_log: usize,
     new_units: bool,
@@ -49,45 +80,44 @@ struct Sudoku {
     next_clause: usize,
     lfsr: u32,
     units: Units,
-    clauses: [u16; CLAUSES],
-    literals: [u16; LITERALS],
+    clauses: [SmallIndex<LITERALS>; CLAUSES],
+    literals: [SmallIndex<VALUES>; LITERALS],
 }
 
-const fn index(row: usize, column: usize, value: usize) -> usize {
-    row.wrapping_mul(N)
-        .wrapping_add(column)
-        .wrapping_mul(N)
-        .wrapping_add(value)
+const fn index(row: usize, column: usize, value: usize) -> SmallIndex<VARS> {
+    SmallIndex(
+        row.wrapping_mul(N)
+            .wrapping_add(column)
+            .wrapping_mul(N)
+            .wrapping_add(value) as u16,
+    )
 }
-const fn is(index: usize) -> u16 {
-    ((index << 1) | 1) as u16
+const fn is(index: SmallIndex<VARS>) -> SmallIndex<VALUES> {
+    SmallIndex((index.0 << 1) | 1)
 }
-const fn not(index: usize) -> u16 {
-    (index << 1) as u16
+const fn not(index: SmallIndex<VARS>) -> SmallIndex<VALUES> {
+    SmallIndex(index.0 << 1)
 }
 
 impl Units {
     #[inline]
-    fn set(&mut self, index: usize, value: bool) {
-        let index = VARS.min(index);
-        let literal = index * 2 | value as usize;
-        //SAFETY: `raw` is sized so that this is in range.
-        unsafe {
-            let v = self.raw.get_unchecked_mut(literal >> 5);
-            let mask = 1u32 << (literal & 31);
-            if (*v & mask) == 0 && self.next_log < VARS {
-                self.log[self.next_log] = literal as u16;
-                self.next_log += 1;
-                self.new_units = true;
-            }
-            *v |= mask;
+    fn set(&mut self, index: SmallIndex<VARS>, value: bool) {
+        let literal = if value { is(index) } else { not(index) };
+        let (index, bit) = literal.raw_bit();
+        let v = index.get_mut(&mut self.raw);
+        let mask = 1 << bit;
+        if (*v & mask) == 0 && self.next_log < VARS {
+            self.log[self.next_log] = literal;
+            self.next_log += 1;
+            self.new_units = true;
         }
+        *v |= mask;
     }
     fn snapshot(&mut self) {
         if self.next_cursor >= GRID {
             return;
         }
-        self.cursor[self.next_cursor] = self.next_log as u16;
+        self.cursor[self.next_cursor] = SmallIndex::new(self.next_log as u16);
         self.next_cursor += 1;
     }
     fn drop_snapshot(&mut self) {
@@ -101,22 +131,18 @@ impl Units {
             return;
         }
         self.next_cursor -= 1;
-        let snapshot = self.cursor[self.next_cursor] as usize;
+        let snapshot = self.cursor[self.next_cursor].0.into();
         while self.next_log > snapshot {
             self.next_log -= 1;
-            unsafe {
-                //SAFETY: `next_log` is always < VARS here.
-                let literal = *self.log.get_unchecked(self.next_log) as usize;
-                //SAFETY: `raw` is sized so that this is in range.
-                *self.raw.get_unchecked_mut(literal / 32) ^= 1 << (literal & 31);
-            }
+            let literal = SmallIndex(self.next_log as u16).get(&self.log);
+            let (index, bit) = literal.raw_bit();
+            *index.get_mut(&mut self.raw) ^= 1 << bit;
         }
     }
     #[inline]
-    fn get(&self, index: usize) -> u32 {
-        let index = VARS.min(index);
-        //SAFETY: `units` is sized so that this is in range.
-        unsafe { (*self.raw.get_unchecked(index / CRUMBS) >> (index % CRUMBS * 2)) & 3 }
+    fn get(&self, index: SmallIndex<VARS>) -> u32 {
+        let (index, crumb) = index.raw_crumb();
+        (index.get(&self.raw) >> (crumb * 2)) & 3
     }
     fn assign(&mut self, row: usize, column: usize, value: usize) {
         self.set(index(row, column, value), true);
@@ -139,9 +165,10 @@ impl Units {
             }
         }
     }
-    fn set_false_or_assign(&mut self, index: usize, value: bool) {
+    fn set_false_or_assign(&mut self, index: SmallIndex<VARS>, value: bool) {
         if value {
             // Effectively assignment, apply the rules.
+            let index = index.0 as usize;
             let row = index / (N * N);
             let column = index / N % N;
             let value = index % N;
@@ -153,8 +180,8 @@ impl Units {
     const fn new() -> Self {
         Self {
             raw: [0; UNITS],
-            log: [0; VARS],
-            cursor: [0; GRID],
+            log: [SmallIndex(0); VARS],
+            cursor: [SmallIndex(0); GRID],
             next_cursor: 0,
             next_log: 0,
             new_units: false,
@@ -163,17 +190,18 @@ impl Units {
 }
 
 impl Sudoku {
-    fn try_insert(&mut self, clause: &[u16]) -> Result<(), ()> {
+    fn try_insert(&mut self, clause: &[SmallIndex<VALUES>]) -> Result<(), ()> {
         let first_literal = self.next_literal;
         let mut next_literal = first_literal;
         for &literal in clause {
-            let value = self.units.get((literal >> 1) as usize);
+            let (index, bit) = literal.to_var();
+            let value = self.units.get(index);
             if value == 0 {
                 // Literal is indeterminate.
                 assert(next_literal < LITERALS)?;
                 self.literals[next_literal] = literal;
                 next_literal += 1;
-            } else if value == (1 << (literal & 1)) {
+            } else if value == (1 << bit) {
                 // Literal is true, skip clause.
                 return Ok(());
             }
@@ -185,14 +213,13 @@ impl Sudoku {
         if next_literal.wrapping_sub(first_literal) == 1 {
             assert(first_literal < LITERALS)?;
             let literal = self.literals[first_literal];
-            let index = (literal >> 1) as usize;
-            let value = (literal & 1) != 0;
-            self.units.set_false_or_assign(index, value);
+            let (index, bit) = literal.to_var();
+            self.units.set_false_or_assign(index, bit != 0);
             return Ok(());
         }
         let next_clause = self.next_clause;
         assert(next_clause < CLAUSES)?;
-        self.clauses[next_clause] = first_literal as u16;
+        self.clauses[next_clause] = SmallIndex(first_literal as u16);
         self.next_literal = next_literal;
         self.next_clause = next_clause + 1;
         Ok(())
@@ -208,7 +235,7 @@ impl Sudoku {
         })
     }
     fn cell_definedness(&mut self, row: usize, column: usize) -> Result<(), ()> {
-        let mut clause = [0; N];
+        let mut clause = [SmallIndex(0); N];
         for (value, literal) in clause.iter_mut().enumerate() {
             *literal = is(index(row, column, value));
         }
@@ -225,7 +252,7 @@ impl Sudoku {
         })
     }
     fn row_definedness(&mut self, row: usize, value: usize) -> Result<(), ()> {
-        let mut clause = [0; N];
+        let mut clause = [SmallIndex(0); N];
         for (column, literal) in clause.iter_mut().enumerate() {
             *literal = is(index(row, column, value));
         }
@@ -242,7 +269,7 @@ impl Sudoku {
         })
     }
     fn column_definedness(&mut self, column: usize, value: usize) -> Result<(), ()> {
-        let mut clause = [0; N];
+        let mut clause = [SmallIndex(0); N];
         for (row, literal) in clause.iter_mut().enumerate() {
             *literal = is(index(row, column, value));
         }
@@ -273,7 +300,7 @@ impl Sudoku {
         block_column: usize,
         value: usize,
     ) -> Result<(), ()> {
-        let mut clause = [0; N];
+        let mut clause = [SmallIndex(0); N];
         for (offset, subclause) in clause.chunks_exact_mut(SQRT_N).enumerate() {
             let row = block_row + offset;
             for (offset, literal) in subclause.iter_mut().enumerate() {
@@ -344,7 +371,7 @@ impl Sudoku {
         let clauses = try_write_slice(&mut clauses, &self.clauses, len)?;
         let tail = {
             let [.., last] = clauses else { Err(())? };
-            [*last, self.next_literal as u16]
+            [*last, SmallIndex(self.next_literal as u16)]
         };
         self.next_clause = 0;
         self.next_literal = 0;
@@ -352,27 +379,27 @@ impl Sudoku {
             let &[first_literal, next_literal] = bounds else {
                 Err(())?
             };
-            let first_literal = first_literal as usize;
-            let next_literal = next_literal as usize;
+            let first_literal = first_literal.0 as usize;
+            let next_literal = next_literal.0 as usize;
             assert(first_literal <= next_literal)?;
             assert(next_literal <= LITERALS)?;
             let src = &self.literals[first_literal..next_literal];
             let len = src.len();
             assert(len <= N)?;
-            let mut clause = [0; N];
+            let mut clause = [SmallIndex(0); N];
             let clause = &mut clause[..len];
             clause.copy_from_slice(src);
             self.try_insert(clause)?;
         }
         Ok(())
     }
-    fn randint(&mut self, limit: usize) -> usize {
+    fn randint(&mut self, limit: usize) -> u16 {
         let mut x = self.lfsr;
         x ^= x << 13;
         x ^= x >> 17;
         x ^= x << 5;
         self.lfsr = x;
-        ((x as u64 * limit as u64) >> 32) as usize
+        ((x as u64 * limit as u64) >> 32) as u16
     }
     fn dpll(&mut self) -> bool {
         while self.units.new_units && self.next_clause != 0 {
@@ -384,14 +411,10 @@ impl Sudoku {
             return true;
         }
         self.units.snapshot();
-        let (index, value) = {
-            let literal = unsafe {
-                //SAFETY: `next_literal` is always <= LITERALS.
-                let choice = self.randint(self.next_literal);
-                *self.literals.get_unchecked(choice)
-            };
-            (literal as usize >> 1, literal & 1 == 0)
-        };
+        let (index, bit) = SmallIndex(self.randint(self.next_literal))
+            .get(&self.literals)
+            .to_var();
+        let value = bit == 0;
         self.units.set(index, value);
         if self.dpll() {
             self.units.drop_snapshot();
@@ -411,12 +434,9 @@ impl Sudoku {
         self.next_clause = 0;
         self.units = Units::new();
         for cursor in cursors {
-            let literal = unsafe {
-                //SAFETY: `cursor` is always < LITERALS.
-                *literals.get_unchecked(cursor as usize) as usize
-            };
-            if (literal & 1) != 0 {
-                self.units.set_false_or_assign(literal >> 1, true);
+            let (index, bit) = cursor.get(&literals).to_var();
+            if bit != 0 {
+                self.units.set_false_or_assign(index, true);
             }
         }
     }
@@ -427,15 +447,15 @@ static mut SUDOKU: Sudoku = Sudoku {
     next_clause: 0,
     lfsr: 0,
     units: Units::new(),
-    clauses: [0; CLAUSES],
-    literals: [0; LITERALS],
+    clauses: [SmallIndex(0); CLAUSES],
+    literals: [SmallIndex(0); LITERALS],
 };
 
 #[wasm_bindgen]
 pub fn assign(index: usize) {
     //SAFETY: Not guaranteed yet.
     unsafe {
-        if SUDOKU.units.get(index) != 0 {
+        if SUDOKU.units.get(SmallIndex::new(index as u16)) != 0 {
             return;
         }
         let row = index / (N * N);
