@@ -2,6 +2,9 @@
 use core::mem::MaybeUninit;
 use wasm_bindgen::prelude::*;
 
+mod smallindex;
+use smallindex::SmallIndex;
+
 const SQRT_N: usize = 3;
 const N: usize = SQRT_N * SQRT_N;
 const GRID: usize = N * N;
@@ -13,36 +16,6 @@ const UNITS: usize = VARS / CRUMBS + 1;
 // Extended CNF encoding (9x9)
 const LITERALS: usize = 26_244;
 const CLAUSES: usize = 11_988;
-
-#[derive(Clone, Copy)]
-#[repr(transparent)]
-struct SmallIndex<const MAX: usize>(u16);
-impl<const MAX: usize> SmallIndex<MAX> {
-    fn new(index: u16) -> Self {
-        Self(index.min(MAX as u16 - 1))
-    }
-    fn get<T: Sized + Copy>(self, a: &[T; MAX]) -> T {
-        unsafe { *a.get_unchecked(self.0 as usize) }
-    }
-    fn get_mut<T: Sized>(self, a: &mut [T; MAX]) -> &mut T {
-        unsafe { a.get_unchecked_mut(self.0 as usize) }
-    }
-}
-macro_rules! mkshift {
-    ($name:ident: $max:ident >> $shift:literal => $newmax:ident) => {
-        impl SmallIndex<$max> {
-            fn $name(self) -> (SmallIndex<$newmax>, u16) {
-                const _: [(); ($max >> $shift) + ($max != ($max >> $shift << $shift)) as usize] =
-                    [(); $newmax];
-                let mask = (1u16 << $shift) - 1;
-                (SmallIndex(self.0 >> $shift), self.0 & mask)
-            }
-        }
-    };
-}
-mkshift!(to_var: VALUES >> 1 => VARS);
-mkshift!(raw_bit: VALUES >> 5 => UNITS);
-mkshift!(raw_crumb: VARS >> 4 => UNITS);
 
 const fn assert(condition: bool) -> Result<(), ()> {
     if condition {
@@ -84,19 +57,20 @@ struct Sudoku {
     literals: [SmallIndex<VALUES>; LITERALS],
 }
 
-const fn index(row: usize, column: usize, value: usize) -> SmallIndex<VARS> {
-    SmallIndex(
-        row.wrapping_mul(N)
-            .wrapping_add(column)
-            .wrapping_mul(N)
-            .wrapping_add(value) as u16,
+fn index(row: SmallIndex<N>, column: SmallIndex<N>, value: SmallIndex<N>) -> SmallIndex<VARS> {
+    SmallIndex::new_unchecked(
+        row.raw()
+            .wrapping_mul(N as u16)
+            .wrapping_add(column.raw())
+            .wrapping_mul(N as u16)
+            .wrapping_add(value.raw()),
     )
 }
-const fn is(index: SmallIndex<VARS>) -> SmallIndex<VALUES> {
-    SmallIndex((index.0 << 1) | 1)
+fn is(index: SmallIndex<VARS>) -> SmallIndex<VALUES> {
+    SmallIndex::new_unchecked((index.raw() << 1) | 1)
 }
-const fn not(index: SmallIndex<VARS>) -> SmallIndex<VALUES> {
-    SmallIndex(index.0 << 1)
+fn not(index: SmallIndex<VARS>) -> SmallIndex<VALUES> {
+    SmallIndex::new_unchecked(index.raw() << 1)
 }
 
 impl Units {
@@ -131,10 +105,10 @@ impl Units {
             return;
         }
         self.next_cursor -= 1;
-        let snapshot = self.cursor[self.next_cursor].0.into();
+        let snapshot = self.cursor[self.next_cursor].raw().into();
         while self.next_log > snapshot {
             self.next_log -= 1;
-            let literal = SmallIndex(self.next_log as u16).get(&self.log);
+            let literal = SmallIndex::new_unchecked(self.next_log as u16).get(&self.log);
             let (index, bit) = literal.raw_bit();
             *index.get_mut(&mut self.raw) ^= 1 << bit;
         }
@@ -144,21 +118,23 @@ impl Units {
         let (index, crumb) = index.raw_crumb();
         (index.get(&self.raw) >> (crumb * 2)) & 3
     }
-    fn assign(&mut self, row: usize, column: usize, value: usize) {
+    fn assign(&mut self, row: SmallIndex<N>, column: SmallIndex<N>, value: SmallIndex<N>) {
         self.set(index(row, column, value), true);
-        for row in (0..N).filter(|&i| i != row) {
+        for row in SmallIndex::all().filter(|&i| i != row) {
             self.set(index(row, column, value), false);
         }
-        for column in (0..N).filter(|&i| i != column) {
+        for column in SmallIndex::all().filter(|&i| i != column) {
             self.set(index(row, column, value), false);
         }
-        for value in (0..N).filter(|&i| i != value) {
+        for value in SmallIndex::all().filter(|&i| i != value) {
             self.set(index(row, column, value), false);
         }
-        let block_row = row - row % SQRT_N;
-        let block_column = column - column % SQRT_N;
-        for block_row in block_row..block_row + SQRT_N {
-            for block_column in block_column..block_column + SQRT_N {
+        let block_row = row.raw() - row.raw() % SQRT_N as u16;
+        let block_column = column.raw() - column.raw() % SQRT_N as u16;
+        for block_row in block_row..block_row + SQRT_N as u16 {
+            let block_row = SmallIndex::new_unchecked(block_row);
+            for block_column in block_column..block_column + SQRT_N as u16 {
+                let block_column = SmallIndex::new_unchecked(block_column);
                 if block_row != row || block_column != column {
                     self.set(index(block_row, block_column, value), false);
                 }
@@ -168,11 +144,15 @@ impl Units {
     fn set_false_or_assign(&mut self, index: SmallIndex<VARS>, value: bool) {
         if value {
             // Effectively assignment, apply the rules.
-            let index = index.0 as usize;
+            let index = index.raw() as usize;
             let row = index / (N * N);
             let column = index / N % N;
             let value = index % N;
-            self.assign(row, column, value);
+            self.assign(
+                SmallIndex::new_unchecked(row as u16),
+                SmallIndex::new_unchecked(column as u16),
+                SmallIndex::new_unchecked(value as u16),
+            );
         } else {
             self.set(index, false);
         }
@@ -180,8 +160,8 @@ impl Units {
     const fn new() -> Self {
         Self {
             raw: [0; UNITS],
-            log: [SmallIndex(0); VARS],
-            cursor: [SmallIndex(0); GRID],
+            log: SmallIndex::array(),
+            cursor: SmallIndex::array(),
             next_cursor: 0,
             next_log: 0,
             new_units: false,
@@ -219,14 +199,14 @@ impl Sudoku {
         }
         let next_clause = self.next_clause;
         assert(next_clause < CLAUSES)?;
-        self.clauses[next_clause] = SmallIndex(first_literal as u16);
+        self.clauses[next_clause] = SmallIndex::new_unchecked(first_literal as u16);
         self.next_literal = next_literal;
         self.next_clause = next_clause + 1;
         Ok(())
     }
-    fn cell_uniqueness(&mut self, row: usize, column: usize) -> Result<(), ()> {
-        Ok(for high_value in 1..N {
-            for low_value in 0..high_value {
+    fn cell_uniqueness(&mut self, row: SmallIndex<N>, column: SmallIndex<N>) -> Result<(), ()> {
+        Ok(for subset in SmallIndex::<N>::pairs() {
+            for (high_value, low_value) in subset {
                 self.try_insert(&[
                     not(index(row, column, low_value)),
                     not(index(row, column, high_value)),
@@ -234,16 +214,17 @@ impl Sudoku {
             }
         })
     }
-    fn cell_definedness(&mut self, row: usize, column: usize) -> Result<(), ()> {
-        let mut clause = [SmallIndex(0); N];
-        for (value, literal) in clause.iter_mut().enumerate() {
+    fn cell_definedness(&mut self, row: SmallIndex<N>, column: SmallIndex<N>) -> Result<(), ()> {
+        let mut clause = SmallIndex::array();
+        for value in SmallIndex::all() {
+            let literal = value.get_mut(&mut clause);
             *literal = is(index(row, column, value));
         }
         self.try_insert(&clause)
     }
-    fn row_uniqueness(&mut self, row: usize, value: usize) -> Result<(), ()> {
-        Ok(for high_column in 1..N {
-            for low_column in 0..high_column {
+    fn row_uniqueness(&mut self, row: SmallIndex<N>, value: SmallIndex<N>) -> Result<(), ()> {
+        Ok(for subset in SmallIndex::<N>::pairs() {
+            for (high_column, low_column) in subset {
                 self.try_insert(&[
                     not(index(row, low_column, value)),
                     not(index(row, high_column, value)),
@@ -251,16 +232,17 @@ impl Sudoku {
             }
         })
     }
-    fn row_definedness(&mut self, row: usize, value: usize) -> Result<(), ()> {
-        let mut clause = [SmallIndex(0); N];
-        for (column, literal) in clause.iter_mut().enumerate() {
+    fn row_definedness(&mut self, row: SmallIndex<N>, value: SmallIndex<N>) -> Result<(), ()> {
+        let mut clause = SmallIndex::array();
+        for column in SmallIndex::all() {
+            let literal = column.get_mut(&mut clause);
             *literal = is(index(row, column, value));
         }
         self.try_insert(&clause)
     }
-    fn column_uniqueness(&mut self, column: usize, value: usize) -> Result<(), ()> {
-        Ok(for high_row in 1..N {
-            for low_row in 0..high_row {
+    fn column_uniqueness(&mut self, column: SmallIndex<N>, value: SmallIndex<N>) -> Result<(), ()> {
+        Ok(for subset in SmallIndex::<N>::pairs() {
+            for (high_row, low_row) in subset {
                 self.try_insert(&[
                     not(index(low_row, column, value)),
                     not(index(high_row, column, value)),
@@ -268,25 +250,36 @@ impl Sudoku {
             }
         })
     }
-    fn column_definedness(&mut self, column: usize, value: usize) -> Result<(), ()> {
-        let mut clause = [SmallIndex(0); N];
-        for (row, literal) in clause.iter_mut().enumerate() {
+    fn column_definedness(
+        &mut self,
+        column: SmallIndex<N>,
+        value: SmallIndex<N>,
+    ) -> Result<(), ()> {
+        let mut clause = SmallIndex::array();
+        for row in SmallIndex::all() {
+            let literal = row.get_mut(&mut clause);
             *literal = is(index(row, column, value));
         }
         self.try_insert(&clause)
     }
     fn block_uniqueness(
         &mut self,
-        block_row: usize,
-        block_column: usize,
-        value: usize,
+        block_row: SmallIndex<N>,
+        block_column: SmallIndex<N>,
+        value: SmallIndex<N>,
     ) -> Result<(), ()> {
-        Ok(for high_offset in 1..N {
-            let high_row = block_row + high_offset / SQRT_N;
-            let high_column = block_column + high_offset % SQRT_N;
-            for low_offset in 0..high_offset {
-                let low_row = block_row + low_offset / SQRT_N;
-                let low_column = block_column + low_offset % SQRT_N;
+        Ok(for subset in SmallIndex::<N>::pairs() {
+            for (high_offset, low_offset) in subset {
+                let high_row =
+                    SmallIndex::new_unchecked(block_row.raw() + high_offset.raw() / SQRT_N as u16);
+                let high_column = SmallIndex::new_unchecked(
+                    block_column.raw() + high_offset.raw() % SQRT_N as u16,
+                );
+                let low_row =
+                    SmallIndex::new_unchecked(block_row.raw() + low_offset.raw() / SQRT_N as u16);
+                let low_column = SmallIndex::new_unchecked(
+                    block_column.raw() + low_offset.raw() % SQRT_N as u16,
+                );
                 self.try_insert(&[
                     not(index(low_row, low_column, value)),
                     not(index(high_row, high_column, value)),
@@ -296,15 +289,15 @@ impl Sudoku {
     }
     fn block_definedness(
         &mut self,
-        block_row: usize,
-        block_column: usize,
-        value: usize,
+        block_row: SmallIndex<N>,
+        block_column: SmallIndex<N>,
+        value: SmallIndex<N>,
     ) -> Result<(), ()> {
-        let mut clause = [SmallIndex(0); N];
+        let mut clause = SmallIndex::array::<N>();
         for (offset, subclause) in clause.chunks_exact_mut(SQRT_N).enumerate() {
-            let row = block_row + offset;
+            let row = SmallIndex::new_unchecked(block_row.raw() + offset as u16);
             for (offset, literal) in subclause.iter_mut().enumerate() {
-                let column = block_column + offset;
+                let column = SmallIndex::new_unchecked(block_column.raw() + offset as u16);
                 *literal = is(index(row, column, value));
             }
         }
@@ -314,46 +307,46 @@ impl Sudoku {
         self.next_clause = 0;
         self.next_literal = 0;
         self.units.new_units = false;
-        for row in 0..N {
-            for column in 0..N {
+        for row in SmallIndex::all() {
+            for column in SmallIndex::all() {
                 self.cell_definedness(row, column)?;
             }
         }
-        for row in 0..N {
-            for value in 0..N {
+        for row in SmallIndex::all() {
+            for value in SmallIndex::all() {
                 self.row_definedness(row, value)?;
             }
         }
-        for column in 0..N {
-            for value in 0..N {
+        for column in SmallIndex::all() {
+            for value in SmallIndex::all() {
                 self.column_definedness(column, value)?;
             }
         }
-        for block_row in (0..N).step_by(SQRT_N) {
-            for block_column in (0..N).step_by(SQRT_N) {
-                for value in 0..N {
+        for block_row in SmallIndex::all().step_by(SQRT_N) {
+            for block_column in SmallIndex::all().step_by(SQRT_N) {
+                for value in SmallIndex::all() {
                     self.block_definedness(block_row, block_column, value)?;
                 }
             }
         }
-        for row in 0..N {
-            for column in 0..N {
+        for row in SmallIndex::all() {
+            for column in SmallIndex::all() {
                 self.cell_uniqueness(row, column)?;
             }
         }
-        for row in 0..N {
-            for value in 0..N {
+        for row in SmallIndex::all() {
+            for value in SmallIndex::all() {
                 self.row_uniqueness(row, value)?;
             }
         }
-        for column in 0..N {
-            for value in 0..N {
+        for column in SmallIndex::all() {
+            for value in SmallIndex::all() {
                 self.column_uniqueness(column, value)?;
             }
         }
-        for block_row in (0..N).step_by(SQRT_N) {
-            for block_column in (0..N).step_by(SQRT_N) {
-                for value in 0..N {
+        for block_row in SmallIndex::all().step_by(SQRT_N) {
+            for block_column in SmallIndex::all().step_by(SQRT_N) {
+                for value in SmallIndex::all() {
                     self.block_uniqueness(block_row, block_column, value)?;
                 }
             }
@@ -371,7 +364,7 @@ impl Sudoku {
         let clauses = try_write_slice(&mut clauses, &self.clauses, len)?;
         let tail = {
             let [.., last] = clauses else { Err(())? };
-            [*last, SmallIndex(self.next_literal as u16)]
+            [*last, SmallIndex::new_unchecked(self.next_literal as u16)]
         };
         self.next_clause = 0;
         self.next_literal = 0;
@@ -379,14 +372,14 @@ impl Sudoku {
             let &[first_literal, next_literal] = bounds else {
                 Err(())?
             };
-            let first_literal = first_literal.0 as usize;
-            let next_literal = next_literal.0 as usize;
+            let first_literal = first_literal.raw() as usize;
+            let next_literal = next_literal.raw() as usize;
             assert(first_literal <= next_literal)?;
             assert(next_literal <= LITERALS)?;
             let src = &self.literals[first_literal..next_literal];
             let len = src.len();
             assert(len <= N)?;
-            let mut clause = [SmallIndex(0); N];
+            let mut clause = SmallIndex::array::<N>();
             let clause = &mut clause[..len];
             clause.copy_from_slice(src);
             self.try_insert(clause)?;
@@ -411,7 +404,7 @@ impl Sudoku {
             return true;
         }
         self.units.snapshot();
-        let (index, bit) = SmallIndex(self.randint(self.next_literal))
+        let (index, bit) = SmallIndex::new_unchecked(self.randint(self.next_literal))
             .get(&self.literals)
             .to_var();
         let value = bit == 0;
@@ -447,8 +440,8 @@ static mut SUDOKU: Sudoku = Sudoku {
     next_clause: 0,
     lfsr: 0,
     units: Units::new(),
-    clauses: [SmallIndex(0); CLAUSES],
-    literals: [SmallIndex(0); LITERALS],
+    clauses: SmallIndex::array(),
+    literals: SmallIndex::array(),
 };
 
 #[wasm_bindgen]
@@ -461,7 +454,11 @@ pub fn assign(index: usize) {
         let row = index / (N * N);
         let column = index / N % N;
         let value = index % N;
-        SUDOKU.units.assign(row, column, value);
+        SUDOKU.units.assign(
+            SmallIndex::new_unchecked(row as u16),
+            SmallIndex::new_unchecked(column as u16),
+            SmallIndex::new_unchecked(value as u16),
+        );
     }
 }
 
