@@ -73,8 +73,18 @@ macro_rules! mkshift {
         }
     };
 }
-use super::{UNITS, VALUES, VARS};
+use super::{N, UNITS, VALUES, VARS};
 mkshift!(to_var: VALUES >> 1 => VARS);
 mkshift!(raw_bit: VALUES >> 5 => UNITS);
 mkshift!(raw_crumb: VARS >> 4 => UNITS);
 mkshift!(from_var: VARS << 1 => VALUES);
+impl SmallIndex<VARS> {
+    #[inline]
+    pub fn into(self) -> [SmallIndex<N>; 3] {
+        [
+            SmallIndex::new_unchecked(self.0 / (N * N) as u16),
+            SmallIndex::new_unchecked(self.0 / N as u16 % N as u16),
+            SmallIndex::new_unchecked(self.0 % N as u16),
+        ]
+    }
+}

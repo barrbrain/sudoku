@@ -118,7 +118,8 @@ impl Units {
         let (index, crumb) = index.raw_crumb();
         (index.get(&self.raw) >> (crumb * 2)) & 3
     }
-    fn assign(&mut self, row: SmallIndex<N>, column: SmallIndex<N>, value: SmallIndex<N>) {
+    fn assign(&mut self, triple: [SmallIndex<N>; 3]) {
+        let [row, column, value] = triple;
         self.set(index(row, column, value), true);
         for row in SmallIndex::all().filter(|&i| i != row) {
             self.set(index(row, column, value), false);
@@ -143,16 +144,7 @@ impl Units {
     }
     fn set_false_or_assign(&mut self, index: SmallIndex<VARS>, value: bool) {
         if value {
-            // Effectively assignment, apply the rules.
-            let index = index.raw() as usize;
-            let row = index / (N * N);
-            let column = index / N % N;
-            let value = index % N;
-            self.assign(
-                SmallIndex::new_unchecked(row as u16),
-                SmallIndex::new_unchecked(column as u16),
-                SmallIndex::new_unchecked(value as u16),
-            );
+            self.assign(index.into());
         } else {
             self.set(index, false);
         }
@@ -448,17 +440,11 @@ static mut SUDOKU: Sudoku = Sudoku {
 pub fn assign(index: usize) {
     //SAFETY: Not guaranteed yet.
     unsafe {
-        if SUDOKU.units.get(SmallIndex::new(index as u16)) != 0 {
+        let index = SmallIndex::new(index as u16);
+        if SUDOKU.units.get(index) != 0 {
             return;
         }
-        let row = index / (N * N);
-        let column = index / N % N;
-        let value = index % N;
-        SUDOKU.units.assign(
-            SmallIndex::new_unchecked(row as u16),
-            SmallIndex::new_unchecked(column as u16),
-            SmallIndex::new_unchecked(value as u16),
-        );
+        SUDOKU.units.assign(index.into());
     }
 }
 
