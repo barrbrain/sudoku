@@ -62,8 +62,19 @@ macro_rules! mkshift {
             }
         }
     };
+    ($name:ident: $max:ident << $shift:literal => $newmax:ident) => {
+        impl SmallIndex<$max> {
+            #[inline]
+            pub fn $name(self, value: u16) -> SmallIndex<$newmax> {
+                const _: [(); $max << $shift] = [(); $newmax];
+                let mask = (1u16 << $shift) - 1;
+                SmallIndex((self.0 << $shift) | (value & mask))
+            }
+        }
+    };
 }
 use super::{UNITS, VALUES, VARS};
 mkshift!(to_var: VALUES >> 1 => VARS);
 mkshift!(raw_bit: VALUES >> 5 => UNITS);
 mkshift!(raw_crumb: VARS >> 4 => UNITS);
+mkshift!(from_var: VARS << 1 => VALUES);

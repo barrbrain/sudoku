@@ -67,16 +67,16 @@ fn index(row: SmallIndex<N>, column: SmallIndex<N>, value: SmallIndex<N>) -> Sma
     )
 }
 fn is(index: SmallIndex<VARS>) -> SmallIndex<VALUES> {
-    SmallIndex::new_unchecked((index.raw() << 1) | 1)
+    SmallIndex::from_var(index, 1)
 }
 fn not(index: SmallIndex<VARS>) -> SmallIndex<VALUES> {
-    SmallIndex::new_unchecked(index.raw() << 1)
+    SmallIndex::from_var(index, 0)
 }
 
 impl Units {
     #[inline]
     fn set(&mut self, index: SmallIndex<VARS>, value: bool) {
-        let literal = if value { is(index) } else { not(index) };
+        let literal = SmallIndex::from_var(index, value as u16);
         let (index, bit) = literal.raw_bit();
         let v = index.get_mut(&mut self.raw);
         let mask = 1 << bit;
