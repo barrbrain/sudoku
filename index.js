@@ -6,7 +6,8 @@ const renderedUnits = new Uint32Array(UNITS);
 
 const CELL_SIZE = 16;
 const CELL_COLOR = "#FFFFFF";
-const GRID_COLOR = "#CCCCCC";
+const GRID_COLOR = "#000000";
+const SUBGRID_COLOR = "#CCCCCC";
 const FALSE_COLOR = "#FFCCCC";
 const TRUE_COLOR = "#000000";
 const SIDE = 9 * 3;
@@ -34,7 +35,7 @@ const drawGrid = () => {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   ctx.beginPath();
-  ctx.strokeStyle = GRID_COLOR;
+  ctx.strokeStyle = SUBGRID_COLOR;
 
   for (let i = 0; i <= SIDE; i += 3) {
     ctx.moveTo(i * (CELL_SIZE + 1) + 1, 0);
@@ -42,6 +43,21 @@ const drawGrid = () => {
   }
 
   for (let j = 0; j <= SIDE; j += 3) {
+    ctx.moveTo(0,                          j * (CELL_SIZE + 1) + 1);
+    ctx.lineTo((CELL_SIZE + 1) * SIDE + 1, j * (CELL_SIZE + 1) + 1);
+  }
+
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.strokeStyle = GRID_COLOR;
+
+  for (let i = 0; i <= SIDE; i += 9) {
+    ctx.moveTo(i * (CELL_SIZE + 1) + 1, 0);
+    ctx.lineTo(i * (CELL_SIZE + 1) + 1, (CELL_SIZE + 1) * SIDE + 1);
+  }
+
+  for (let j = 0; j <= SIDE; j += 9) {
     ctx.moveTo(0,                          j * (CELL_SIZE + 1) + 1);
     ctx.lineTo((CELL_SIZE + 1) * SIDE + 1, j * (CELL_SIZE + 1) + 1);
   }
@@ -87,7 +103,25 @@ const cellDrawer = (mask) => {
     }
   };
 };
-const trueCellDrawer = cellDrawer(0xAAAAAAAA);
+const cellDrawer2 = (mask) => {
+  return (cell, offset) => {
+    let unrenderedCell = (cell ^ renderedUnits[offset]) & mask;
+    while (unrenderedCell != 0) {
+      const lz = Math.clz32(unrenderedCell);
+      unrenderedCell ^= 0x80000000 >>> lz;
+      const index = 15 - (lz >>> 1) + offset * 16;
+      const row = toRow[index] - (toRow[index] % 3) + 1.75;
+      const col = toCol[index] - (toCol[index] % 3) + 1;
+      const text = index % 9 + 1;
+      ctx.fillText(
+        text,
+        col * (CELL_SIZE + 1) + CELL_SIZE / 2 + 1,
+        row * (CELL_SIZE + 1) + CELL_SIZE - 1,
+      );
+    }
+  };
+};
+const trueCellDrawer = cellDrawer2(0xAAAAAAAA);
 const falseCellDrawer = cellDrawer(0x55555555);
 const drawCells = () => {
   const cells = units();
@@ -95,11 +129,12 @@ const drawCells = () => {
   ctx.font = CELL_SIZE + "px sans-serif";
   ctx.textAlign = "center";
 
-  ctx.fillStyle = TRUE_COLOR;
-  cells.forEach(trueCellDrawer);
-
   ctx.fillStyle = FALSE_COLOR;
   cells.forEach(falseCellDrawer);
+
+  ctx.font = CELL_SIZE * 3 + "px sans-serif";
+  ctx.fillStyle = TRUE_COLOR;
+  cells.forEach(trueCellDrawer);
 
   renderedUnits.set(cells);
 };
